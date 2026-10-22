@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #12110e;
+  --color-surface: #1c1914;
+  --color-raised: #262218;
+  --color-fg: #f4efe6;
+  --color-muted: #b7ad9e;
+  --color-primary: #ffb020;
+  --color-primary-fg: #1a1204;
+  --color-line: #3a3328;
+  --font-sans: "PingFang TC", "Noto Sans TC", "Heiti TC", "Microsoft JhengHei", "WenQuanYi Zen Hei", sans-serif;
+  --font-display: "Barlow Condensed", "Arial Narrow", "Noto Sans TC", sans-serif;
+  --radius-card: 1.25rem;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    min-height: 100dvh;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--color-primary);
+    color: var(--color-primary-fg);
+  }
+}
+
+.blind {
+  background: var(--color-bg);
+  color: var(--color-primary);
+  border: 1px solid var(--color-line);
+  border-radius: 0.85rem;
+}
+
+.pt-safe {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+
+.pb-nav {
+  padding-bottom: calc(5.75rem + env(safe-area-inset-bottom));
+}
+
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
