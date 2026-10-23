@@ -27,6 +27,13 @@ import {
   type Suggestion,
   type TripResult,
 } from "@/lib/bus/types"
+import {
+  MAP_NAV_LABELS,
+  openMapNavigation,
+  type MapNavProvider,
+  type MapNavTarget,
+  useMapNavProvider,
+} from "@/lib/map-navigation"
 import { useSaved, type SavedPlace, type SavedRoute, type SavedTrip } from "@/lib/saved"
 
 const QUICK = ["中環", "銅鑼灣", "旺角", "尖沙咀", "觀塘", "沙田", "荃灣", "元朗"]
@@ -38,6 +45,8 @@ type Field = "origin" | "destination"
 
 export function TransitApp() {
   const saved = useSaved()
+  const mapNav = useMapNavProvider()
+  const [mapPick, setMapPick] = useState<MapNavTarget | null>(null)
   const [tab, setTab] = useState<Tab>("search")
   const [originText, setOriginText] = useState("")
   const [destText, setDestText] = useState("")
@@ -398,6 +407,21 @@ export function TransitApp() {
       .finally(() => setLoading(false))
   }
 
+  function requestMapNavigation(target: MapNavTarget) {
+    if (mapNav.provider === "ask") {
+      setMapPick(target)
+      return
+    }
+    openMapNavigation(mapNav.provider, target)
+  }
+
+  function confirmMapPick(choice: Exclude<MapNavProvider, "ask">, remember: boolean) {
+    if (!mapPick) return
+    if (remember) mapNav.setProvider(choice)
+    openMapNavigation(choice, mapPick)
+    setMapPick(null)
+  }
+
   async function updateRoutes() {
     setUpdating(true)
     setSourceNote("正在向巴士公司更新路線，可能要幾分鐘。")
@@ -631,8 +655,24 @@ export function TransitApp() {
                   <p className="mt-2 text-sm text-muted">試下放大範圍，或改選更接近馬路的車站。</p>
                 </div>
               )}
-              <TripList title="直達" trips={result?.directs ?? []} etas={etas} tick={tick} savedIds={savedIds} onToggle={toggleRoute} />
-              <TripList title="轉一次車" trips={result?.transfers ?? []} etas={etas} tick={tick} savedIds={savedIds} onToggle={toggleRoute} />
+              <TripList
+                title="直達"
+                trips={result?.directs ?? []}
+                etas={etas}
+                tick={tick}
+                savedIds={savedIds}
+                onToggle={toggleRoute}
+                onNavigate={requestMapNavigation}
+              />
+              <TripList
+                title="轉一次車"
+                trips={result?.transfers ?? []}
+                etas={etas}
+                tick={tick}
+                savedIds={savedIds}
+                onToggle={toggleRoute}
+                onNavigate={requestMapNavigation}
+              />
               <TripList
                 title={result?.directs.length || result?.transfers.length ? "途經出發地" : "途經路線"}
                 trips={result?.passing ?? []}
@@ -640,6 +680,7 @@ export function TransitApp() {
                 tick={tick}
                 savedIds={savedIds}
                 onToggle={toggleRoute}
+                onNavigate={requestMapNavigation}
               />
               {result && resultCount > 0 && (
                 <button
@@ -770,9 +811,18 @@ export function TransitApp() {
                   </ul>
                 )}
               </div>
+              <MapNavSettings provider={mapNav.provider} onChange={mapNav.setProvider} />
             </section>
           )}
         </main>
+
+        {mapPick ? (
+          <MapNavPicker
+            target={mapPick}
+            onCancel={() => setMapPick(null)}
+            onChoose={(choice, remember) => confirmMapPick(choice, remember)}
+          />
+        ) : null}
 
         <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface pb-safe">
           <div className="mx-auto grid max-w-lg grid-cols-3">
@@ -826,9 +876,86 @@ function SuggestionList({
   )
 }
 
-function openStopMap(name: string, lat: number, lng: number) {
-  const url = `https://maps.apple.com/?daddr=${lat},${lng}&dirflg=w&q=${encodeURIComponent(name)}`
-  window.open(url, "_blank", "noopener,noreferrer")
+function MapNavSettings({
+  provider,
+  onChange,
+}: {
+  provider: MapNavProvider
+  onChange: (provider: MapNavProvider) => void
+}) {
+  const options: MapNavProvider[] = ["google", "apple", "ask"]
+  return (
+    <div className="rounded-card border border-line bg-surface p-3">
+      <h2 className="text-lg font-medium">地圖導航</h2>
+      <p className="mt-1 text-sm text-muted">撳「導航到車站」時用哪個地圖 App。預設為 Google 地圖。</p>
+      <div className="mt-3 flex flex-col gap-2">
+        {options.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={
+              id === provider
+                ? "flex h-11 items-center justify-between rounded-xl bg-raised px-3 text-sm text-primary"
+                : "flex h-11 items-center justify-between rounded-xl border border-line px-3 text-sm text-fg"
+            }
+            aria-pressed={id === provider}
+            onClick={() => onChange(id)}
+          >
+            <span>{MAP_NAV_LABELS[id]}</span>
+            {id === provider ? <span className="text-xs">已選</span> : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MapNavPicker({
+  target,
+  onCancel,
+  onChoose,
+}: {
+  target: MapNavTarget
+  onCancel: () => void
+  onChoose: (choice: Exclude<MapNavProvider, "ask">, remember: boolean) => void
+}) {
+  const [remember, setRemember] = useState(true)
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/55 p-4 pb-nav" role="dialog" aria-modal="true" aria-labelledby="map-nav-title">
+      <div className="w-full max-w-lg rounded-card border border-line bg-surface p-4 shadow-xl">
+        <h2 id="map-nav-title" className="text-lg font-medium">選擇地圖</h2>
+        <p className="mt-1 truncate text-sm text-muted">導航到 {target.name}</p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            className="h-12 rounded-xl bg-primary text-sm font-medium text-primary-fg"
+            onClick={() => onChoose("google", remember)}
+          >
+            Google 地圖
+          </button>
+          <button
+            type="button"
+            className="h-12 rounded-xl border border-line bg-raised text-sm font-medium"
+            onClick={() => onChoose("apple", remember)}
+          >
+            Apple 地圖
+          </button>
+        </div>
+        <label className="mt-4 flex min-h-11 items-center gap-2 text-sm text-muted">
+          <input
+            type="checkbox"
+            className="size-4 accent-[var(--color-primary)]"
+            checked={remember}
+            onChange={(event) => setRemember(event.target.checked)}
+          />
+          記住選擇，下次自動開啟
+        </label>
+        <button type="button" className="mt-2 h-11 w-full text-sm text-muted" onClick={onCancel}>
+          取消
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function PlaceNameButtons({ disabled, onPick }: { disabled: boolean; onPick: (name: string) => void }) {
@@ -935,6 +1062,7 @@ function TripList({
   tick,
   savedIds,
   onToggle,
+  onNavigate,
 }: {
   title: string
   trips: TripResult[]
@@ -942,13 +1070,22 @@ function TripList({
   tick: number
   savedIds: Set<string>
   onToggle: (trip: TripResult) => void
+  onNavigate: (target: MapNavTarget) => void
 }) {
   if (!trips.length) return null
   return (
     <div className="space-y-3">
       <h2 className="text-sm text-muted">{title}</h2>
       {trips.map((trip) => (
-        <TripCard key={trip.id} trip={trip} etas={etas} tick={tick} saved={savedIds.has(trip.id)} onToggle={() => onToggle(trip)} />
+        <TripCard
+          key={trip.id}
+          trip={trip}
+          etas={etas}
+          tick={tick}
+          saved={savedIds.has(trip.id)}
+          onToggle={() => onToggle(trip)}
+          onNavigate={onNavigate}
+        />
       ))}
     </div>
   )
@@ -960,12 +1097,14 @@ function TripCard({
   tick,
   saved,
   onToggle,
+  onNavigate,
 }: {
   trip: TripResult
   etas: Record<string, EtaHit[] | "loading" | "error">
   tick: number
   saved: boolean
   onToggle: () => void
+  onNavigate: (target: MapNavTarget) => void
 }) {
   const first = trip.legs[0]
   if (!first) return null
@@ -991,7 +1130,9 @@ function TripCard({
             <button
               type="button"
               className="mt-1 inline-flex h-11 items-center gap-2 text-sm text-primary"
-              onClick={() => openStopMap(first.boardName, first.boardLat, first.boardLng)}
+              onClick={() =>
+                onNavigate({ name: first.boardName, lat: first.boardLat, lng: first.boardLng })
+              }
             >
               <Navigation className="size-4" />
               導航到車站
