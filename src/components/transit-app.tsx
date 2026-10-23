@@ -408,11 +408,12 @@ export function TransitApp() {
   }
 
   function requestMapNavigation(target: MapNavTarget) {
-    if (mapNav.provider === "ask") {
+    const provider = mapNav.provider
+    if (provider === "ask") {
       setMapPick(target)
       return
     }
-    openMapNavigation(mapNav.provider, target)
+    openMapNavigation(provider, target)
   }
 
   function confirmMapPick(choice: Exclude<MapNavProvider, "ask">, remember: boolean) {
