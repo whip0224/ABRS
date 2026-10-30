@@ -102,7 +102,15 @@ export function formatWalk(meters: number) {
 }
 
 export function formatEta(epoch: number, now = Date.now()) {
-  const minutes = Math.round((epoch - now) / 60000)
-  if (minutes <= 0) return "即將"
+  const diffMs = epoch - now
+  if (diffMs <= 60_000) return "即將到站"
+  const minutes = Math.max(1, Math.floor(diffMs / 60_000))
   return `${minutes} 分鐘`
+}
+
+export function formatEtaClock(epoch: number) {
+  const date = new Date(epoch)
+  const hours = date.getHours()
+  const minutes = date.getMinutes().toString().padStart(2, "0")
+  return `${hours}:${minutes}`
 }

@@ -3,6 +3,7 @@ import {
   ArrowDownUp,
   Bookmark,
   BookmarkCheck,
+  ChevronDown,
   Clock,
   Footprints,
   LocateFixed,
@@ -19,6 +20,7 @@ import { searchBuses, suggestStops } from "@/lib/bus/engine"
 import {
   etaKey,
   formatEta,
+  formatEtaClock,
   formatWalk,
   type EtaHit,
   type EtaQuery,
@@ -69,11 +71,15 @@ export function TransitApp() {
   const [sourceNote, setSourceNote] = useState<string | null>(null)
   const [builtLabel, setBuiltLabel] = useState("")
   const [updating, setUpdating] = useState(false)
+  const [showMoreRoutes, setShowMoreRoutes] = useState(false)
+  const [tripSavedNote, setTripSavedNote] = useState<string | null>(null)
+  const [refreshingEtas, setRefreshingEtas] = useState(false)
   const requestId = useRef(0)
 
   const refreshEtas = useCallback(async (queries: EtaQuery[]) => {
-    const unique = dedupeQueries(queries).slice(0, 16)
+    const unique = dedupeQueries(queries).slice(0, 32)
     if (!unique.length) return
+    setRefreshingEtas(true)
     setEtas((prev) => {
       const next = { ...prev }
       for (const query of unique) next[etaKey(query)] = "loading"
@@ -92,6 +98,8 @@ export function TransitApp() {
         for (const query of unique) next[etaKey(query)] = "error"
         return next
       })
+    } finally {
+      setRefreshingEtas(false)
     }
   }, [])
 
@@ -99,6 +107,24 @@ export function TransitApp() {
     const id = window.setInterval(() => setTick((n) => n + 1), 30000)
     return () => window.clearInterval(id)
   }, [])
+
+  useEffect(() => {
+    setShowMoreRoutes(false)
+  }, [result])
+
+  const sortedRouteTrips = useMemo(() => {
+    if (!result) return []
+    const all = [...result.directs, ...result.transfers, ...result.passing]
+    return sortTripsByEta(all, etas)
+  }, [result, etas, tick])
+
+  const primaryRouteTrips = sortedRouteTrips.slice(0, 5)
+  const extraRouteTrips = sortedRouteTrips.slice(5)
+
+  const refreshCurrentRouteEtas = useCallback(() => {
+    if (!result) return
+    void refreshEtas(collectTripQueries(sortedRouteTrips))
+  }, [refreshEtas, result, sortedRouteTrips])
 
   useEffect(() => {
     let cancelled = false
@@ -390,6 +416,8 @@ export function TransitApp() {
       }
       return [next, ...prev.filter((trip) => trip.id !== next.id)].slice(0, 20)
     })
+    setTripSavedNote(`已儲存「${origin.label} → ${dest.label}」`)
+    window.setTimeout(() => setTripSavedNote(null), 2800)
   }
 
   function openTrip(trip: SavedTrip) {
@@ -643,6 +671,22 @@ export function TransitApp() {
               {result?.note && (
                 <p className="rounded-xl border border-line bg-surface px-3 py-3 text-sm text-muted">{result.note}</p>
               )}
+              {tripSavedNote ? (
+                <p role="status" className="rounded-xl bg-primary/15 px-3 py-3 text-sm text-primary">
+                  {tripSavedNote}
+                </p>
+              ) : null}
+              {result && resultCount > 0 && (
+                <button
+                  type="button"
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-line bg-surface text-sm text-primary disabled:opacity-50"
+                  disabled={refreshingEtas}
+                  onClick={refreshCurrentRouteEtas}
+                >
+                  <RefreshCw className={refreshingEtas ? "size-4 animate-spin" : "size-4"} />
+                  {refreshingEtas ? "更新中…" : "更新到站時間"}
+                </button>
+              )}
               {loading && <p className="text-sm text-muted">搜尋中…</p>}
               {!loading && !result && (
                 <div className="rounded-card border border-line bg-surface px-4 py-8 text-center">
@@ -656,44 +700,47 @@ export function TransitApp() {
                   <p className="mt-2 text-sm text-muted">試下放大範圍，或改選更接近馬路的車站。</p>
                 </div>
               )}
-              <TripList
-                title="直達"
-                trips={result?.directs ?? []}
-                etas={etas}
-                tick={tick}
-                savedIds={savedIds}
-                onToggle={toggleRoute}
-                onNavigate={requestMapNavigation}
-              />
-              <TripList
-                title="轉一次車"
-                trips={result?.transfers ?? []}
-                etas={etas}
-                tick={tick}
-                savedIds={savedIds}
-                onToggle={toggleRoute}
-                onNavigate={requestMapNavigation}
-              />
-              <TripList
-                title={result?.directs.length || result?.transfers.length ? "途經出發地" : "途經路線"}
-                trips={result?.passing ?? []}
-                etas={etas}
-                tick={tick}
-                savedIds={savedIds}
-                onToggle={toggleRoute}
-                onNavigate={requestMapNavigation}
-              />
-              {result && resultCount > 0 && (
-                <button
-                  type="button"
-                  className="inline-flex h-11 items-center gap-2 text-sm text-primary"
-                  onClick={() =>
-                    void refreshEtas([...result.directs, ...result.transfers, ...result.passing].flatMap((trip) => trip.legs.map((leg) => leg.eta)))
-                  }
-                >
-                  <RefreshCw className="size-4" />
-                  更新到站時間
-                </button>
+              {!loading && result && resultCount > 0 && (
+                <div className="space-y-3">
+                  <h2 className="text-sm text-muted">按最近到站排序 · 顯示前 5 條路線</h2>
+                  {primaryRouteTrips.map((trip) => (
+                    <TripCard
+                      key={trip.id}
+                      trip={trip}
+                      etas={etas}
+                      tick={tick}
+                      saved={savedIds.has(trip.id)}
+                      onToggle={() => toggleRoute(trip)}
+                      onNavigate={requestMapNavigation}
+                    />
+                  ))}
+                  {extraRouteTrips.length > 0 && (
+                    <div className="space-y-3">
+                      <button
+                        type="button"
+                        className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-line bg-raised text-sm text-fg"
+                        aria-expanded={showMoreRoutes}
+                        onClick={() => setShowMoreRoutes((open) => !open)}
+                      >
+                        <ChevronDown className={showMoreRoutes ? "size-4 rotate-180 transition-transform" : "size-4 transition-transform"} />
+                        {showMoreRoutes ? "收合其他路線" : `顯示其他 ${extraRouteTrips.length} 條路線`}
+                      </button>
+                      {showMoreRoutes
+                        ? extraRouteTrips.map((trip) => (
+                            <TripCard
+                              key={trip.id}
+                              trip={trip}
+                              etas={etas}
+                              tick={tick}
+                              saved={savedIds.has(trip.id)}
+                              onToggle={() => toggleRoute(trip)}
+                              onNavigate={requestMapNavigation}
+                            />
+                          ))
+                        : null}
+                    </div>
+                  )}
+                </div>
               )}
             </section>
           )}
@@ -1056,42 +1103,6 @@ function TabButton({
   )
 }
 
-function TripList({
-  title,
-  trips,
-  etas,
-  tick,
-  savedIds,
-  onToggle,
-  onNavigate,
-}: {
-  title: string
-  trips: TripResult[]
-  etas: Record<string, EtaHit[] | "loading" | "error">
-  tick: number
-  savedIds: Set<string>
-  onToggle: (trip: TripResult) => void
-  onNavigate: (target: MapNavTarget) => void
-}) {
-  if (!trips.length) return null
-  return (
-    <div className="space-y-3">
-      <h2 className="text-sm text-muted">{title}</h2>
-      {trips.map((trip) => (
-        <TripCard
-          key={trip.id}
-          trip={trip}
-          etas={etas}
-          tick={tick}
-          saved={savedIds.has(trip.id)}
-          onToggle={() => onToggle(trip)}
-          onNavigate={onNavigate}
-        />
-      ))}
-    </div>
-  )
-}
-
 function TripCard({
   trip,
   etas,
@@ -1110,12 +1121,14 @@ function TripCard({
   const first = trip.legs[0]
   if (!first) return null
   const second = trip.legs[1]
+  const kindLabel = trip.kind === "transfer" ? "轉車" : trip.kind === "passing" ? "途經" : null
   return (
     <article className="rounded-card border border-line bg-surface p-3">
       <div className="flex gap-3">
         <div className="blind flex w-20 shrink-0 flex-col items-center justify-center px-1 py-3">
           <span className="font-display text-4xl font-semibold leading-none">{first.routeNo}</span>
           <span className="mt-1 text-center text-xs text-muted">{first.companyLabel}</span>
+          {kindLabel ? <span className="mt-1 text-[10px] text-primary">{kindLabel}</span> : null}
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm">
@@ -1144,7 +1157,7 @@ function TripCard({
               落 {first.alightName}
               {first.alightWalkM !== null ? ` · ${formatWalk(first.alightWalkM)}` : ""}
               {first.stopsBetween !== null ? ` · ${first.stopsBetween} 個站` : ""}
-              {first.estMin ? ` · 約 ${first.estMin} 分鐘` : ""}
+              {first.estMin ? ` · 車程約 ${first.estMin} 分鐘` : ""}
             </p>
           )}
           {!first.alightName && <p className="mt-0.5 text-sm text-muted">可在此上車，往 {first.dest}</p>}
@@ -1152,7 +1165,7 @@ function TripCard({
             {first.night && <Tag>通宵</Tag>}
             {first.special && <Tag>特別班</Tag>}
           </div>
-          <EtaLine eta={etas[etaKey(first.eta)]} tick={tick} />
+          <EtaLine eta={etas[etaKey(first.eta)]} tick={tick} showSchedule />
         </div>
         <button
           type="button"
@@ -1193,7 +1206,17 @@ function Tag({ children }: { children: ReactNode }) {
   return <span className="rounded-full bg-raised px-2 py-0.5 text-xs text-primary">{children}</span>
 }
 
-function EtaLine({ eta, tick }: { eta: EtaHit[] | "loading" | "error" | undefined; tick: number }) {
+function EtaLine({
+  eta,
+  tick,
+  showSchedule = false,
+}: {
+  eta: EtaHit[] | "loading" | "error" | undefined
+  tick: number
+  showSchedule?: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const now = Date.now()
   void tick
   if (eta === "loading") {
     return (
@@ -1207,18 +1230,59 @@ function EtaLine({ eta, tick }: { eta: EtaHit[] | "loading" | "error" | undefine
   if (eta === "error") return <p className="mt-2 text-sm text-muted">到站時間暫時無法取得</p>
   if (!eta.length) return <p className="mt-2 text-sm text-muted">暫時沒有班次</p>
   const remark = eta.find((item) => item.remark)?.remark
+  const visible = showSchedule && !expanded ? eta.slice(0, 2) : eta.slice(0, 5)
+  const labels = ["本班", "下一班"]
   return (
     <div className="mt-2">
-      <div className="flex flex-wrap gap-2">
-        {eta.map((item) => (
-          <span key={item.epoch} className="rounded-full bg-bg px-3 py-1 text-sm text-primary">
-            {formatEta(item.epoch)}
-          </span>
+      <div className="space-y-1.5">
+        {visible.map((item, index) => (
+          <div key={`${item.epoch}-${index}`} className="flex flex-wrap items-center gap-2">
+            {showSchedule && index < 2 ? (
+              <span className="w-10 shrink-0 text-xs text-muted">{labels[index] ?? ""}</span>
+            ) : null}
+            <span className="rounded-full bg-bg px-3 py-1 text-sm font-medium text-primary">{formatEta(item.epoch, now)}</span>
+            {showSchedule ? <span className="text-xs text-muted">{formatEtaClock(item.epoch)}</span> : null}
+            {item.remark ? <span className="text-xs text-muted">{item.remark}</span> : null}
+          </div>
         ))}
       </div>
-      {remark ? <p className="mt-1 text-xs text-muted">{remark}</p> : null}
+      {showSchedule && eta.length > 2 ? (
+        <button
+          type="button"
+          className="mt-2 inline-flex h-9 items-center gap-1 text-xs text-primary"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          <ChevronDown className={expanded ? "size-3.5 rotate-180" : "size-3.5"} />
+          {expanded ? "收合其他班次" : `更多班次（${eta.length - 2}）`}
+        </button>
+      ) : null}
+      {!showSchedule && remark ? <p className="mt-1 text-xs text-muted">{remark}</p> : null}
     </div>
   )
+}
+
+function collectTripQueries(trips: TripResult[]) {
+  return trips.flatMap((trip) => trip.legs.map((leg) => leg.eta))
+}
+
+function sortTripsByEta(trips: TripResult[], etas: Record<string, EtaHit[] | "loading" | "error">) {
+  return [...trips].sort((a, b) => {
+    const ea = earliestEtaEpoch(a, etas)
+    const eb = earliestEtaEpoch(b, etas)
+    if (ea === null && eb === null) return 0
+    if (ea === null) return 1
+    if (eb === null) return -1
+    return ea - eb
+  })
+}
+
+function earliestEtaEpoch(trip: TripResult, etas: Record<string, EtaHit[] | "loading" | "error">) {
+  const leg = trip.legs[0]
+  if (!leg) return null
+  const hit = etas[etaKey(leg.eta)]
+  if (!hit || hit === "loading" || hit === "error" || !hit.length) return null
+  return hit[0].epoch
 }
 
 function dedupeQueries(queries: EtaQuery[]) {

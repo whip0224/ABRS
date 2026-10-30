@@ -66,7 +66,7 @@ export const loadEtas = createServerFn({ method: "POST" })
   .validator((input: unknown) => {
     if (!input || typeof input !== "object") throw new Error("到站查詢不正確")
     const items = (input as { items?: unknown }).items
-    if (!Array.isArray(items) || items.length < 1 || items.length > 16) {
+    if (!Array.isArray(items) || items.length < 1 || items.length > 32) {
       throw new Error("到站查詢不正確")
     }
     return { items: items.map(parseEta) }

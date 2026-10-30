@@ -54,10 +54,11 @@ export async function rebuildSnapshot(
     nlbId: string | null,
     gtfsId: string | null,
     stopIds: number[],
+    stopSeqs?: number[],
   ) {
     if (stopIds.length < 2 || !no || !orig) return
     const jt = prevJt.get(`${no}|${dir}|${serviceType}|${stopCo}`) ?? null
-    routes.push([no, co, orig, dest, serviceType, dir, stopCo, nlbId, gtfsId, jt, stopIds])
+    routes.push([no, co, orig, dest, serviceType, dir, stopCo, nlbId, gtfsId, jt, stopIds, stopSeqs])
   }
 
   if (!only || only === "kmb") await rebuildKmb(stopIndex, addRoute)
@@ -128,6 +129,7 @@ function mergeJoint(routes: RouteRow[]) {
       other[3] = route[3]
       other[6] = route[6]
       other[10] = route[10]
+      other[11] = route[11]
     }
   }
   return out
@@ -172,12 +174,16 @@ async function rebuildKmb(
     const rows = groups.get(`${route.route}|${route.bound}|${route.service_type}`) ?? []
     rows.sort((a, b) => a.seq - b.seq)
     const ids: number[] = []
+    const seqs: number[] = []
     for (const row of rows) {
       const stop = stops.get(row.stop)
       const at = stopIndex(row.stop, Number(stop?.lat), Number(stop?.long), stop?.name_tc ?? "", stop?.name_en ?? "")
-      if (at !== null) ids.push(at)
+      if (at !== null) {
+        ids.push(at)
+        seqs.push(row.seq)
+      }
     }
-    addRoute(route.route, ["kmb"], route.orig_tc, route.dest_tc, route.service_type || "1", dir, "kmb", null, null, ids)
+    addRoute(route.route, ["kmb"], route.orig_tc, route.dest_tc, route.service_type || "1", dir, "kmb", null, null, ids, seqs)
   }
 }
 
@@ -220,6 +226,7 @@ async function rebuildCtb(
         }
         rows.sort((a, b) => a.seq - b.seq)
         const ids: number[] = []
+        const seqs: number[] = []
         for (const row of rows) {
           let at = stopIndex(row.stop, Number.NaN, Number.NaN, "", "")
           if (at === null) {
@@ -232,11 +239,14 @@ async function rebuildCtb(
               continue
             }
           }
-          if (at !== null) ids.push(at)
+          if (at !== null) {
+            ids.push(at)
+            seqs.push(row.seq)
+          }
         }
         const orig = dir === "O" ? route.orig_tc : route.dest_tc
         const dest = dir === "O" ? route.dest_tc : route.orig_tc
-        addRoute(route.route, ["ctb"], orig, dest, "1", dir, "ctb", null, null, ids)
+        addRoute(route.route, ["ctb"], orig, dest, "1", dir, "ctb", null, null, ids, seqs)
       }
     },
   )
@@ -271,12 +281,16 @@ async function rebuildNlb(
       return
     }
     const ids: number[] = []
-    for (const stop of stops) {
+    const seqs: number[] = []
+    stops.forEach((stop, index) => {
       const at = stopIndex(stop.stopId, Number(stop.latitude), Number(stop.longitude), stop.stopName_c, stop.stopName_e)
-      if (at !== null) ids.push(at)
-    }
+      if (at !== null) {
+        ids.push(at)
+        seqs.push(index + 1)
+      }
+    })
     const [orig, dest] = route.routeName_c.split(">").map((part) => part.trim())
-    addRoute(route.routeNo, ["nlb"], orig || route.routeName_c, dest || orig || "", "1", "O", "nlb", route.routeId, null, ids)
+    addRoute(route.routeNo, ["nlb"], orig || route.routeName_c, dest || orig || "", "1", "O", "nlb", route.routeId, null, ids, seqs)
   })
 }
 
@@ -340,6 +354,7 @@ async function rebuildGmb(
         }
         rows.sort((a, b) => a.stop_seq - b.stop_seq)
         const ids: number[] = []
+        const seqs: number[] = []
         for (const row of rows) {
           const id = String(row.stop_id)
           const atKnown = stopIndex(id, Number.NaN, Number.NaN, row.name_tc, row.name_en)
@@ -360,7 +375,10 @@ async function rebuildGmb(
               continue
             }
           }
-          if (at !== null) ids.push(at)
+          if (at !== null) {
+            ids.push(at)
+            seqs.push(row.stop_seq)
+          }
         }
         const dir = direction.route_seq === 2 ? "I" : "O"
         addRoute(
@@ -374,6 +392,7 @@ async function rebuildGmb(
           null,
           String(item.route_id),
           ids,
+          seqs,
         )
       }
     }
@@ -424,15 +443,19 @@ async function rebuildMtr(
     const dir = dirRaw === "I" ? "I" : "O"
     list.sort((a, b) => a.seq - b.seq)
     const ids: number[] = []
+    const seqs: number[] = []
     for (const stop of list) {
       const at = stopIndex(stop.id, stop.lat, stop.lng, stop.zh, stop.en)
-      if (at !== null) ids.push(at)
+      if (at !== null) {
+        ids.push(at)
+        seqs.push(stop.seq)
+      }
     }
     const name = names.get(routeId)?.chi ?? routeId
     const parts = name.split("至").map((part) => part.trim())
     const orig = dir === "O" ? parts[0] : parts[1] || parts[0]
     const dest = dir === "O" ? parts[1] || parts[0] : parts[0]
-    addRoute(routeId, ["lrtfeeder"], orig || name, dest || name, "1", dir, "lrtfeeder", null, null, ids)
+    addRoute(routeId, ["lrtfeeder"], orig || name, dest || name, "1", dir, "lrtfeeder", null, null, ids, seqs)
   }
 }
 

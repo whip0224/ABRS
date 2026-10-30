@@ -24,6 +24,7 @@ export type RawSnapshot = {
     string | null,
     number | null,
     number[],
+    number[]?,
   ][]
 }
 
@@ -48,6 +49,7 @@ export type NetRoute = {
   gtfsId: string | null
   jt: number | null
   stops: number[]
+  stopSeqs?: number[]
 }
 
 export type Network = {
@@ -87,6 +89,7 @@ export function prepare(raw: RawSnapshot): Network {
     gtfsId: row[8],
     jt: row[9],
     stops: row[10],
+    stopSeqs: Array.isArray(row[11]) && row[11].length === row[10].length ? row[11] : undefined,
   }))
   const inv: Array<Array<[number, number]>> = stops.map(() => [])
   routes.forEach((route, ri) => {
@@ -445,7 +448,7 @@ function makeLeg(
       route: route.no,
       serviceType: route.serviceType,
       dir: route.dir,
-      seq: boardPos + 1,
+      seq: route.stopSeqs?.[boardPos] ?? boardPos + 1,
       nlbId: route.nlbId,
       gtfsId: route.gtfsId,
     },

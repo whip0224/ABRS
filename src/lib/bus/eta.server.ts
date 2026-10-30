@@ -30,12 +30,14 @@ async function kmb(q: EtaQuery) {
   const url = `https://data.etabus.gov.hk/v1/transport/kmb/eta/${encodeURIComponent(q.stopId)}/${encodeURIComponent(q.route)}/${encodeURIComponent(q.serviceType)}`
   const data = await getJson<{ data?: KmbEta[] }>(url)
   const rows = data?.data ?? []
+  // Stop id is already in the URL — do not filter by seq; a wrong seq drops the imminent bus.
   const matched = rows.filter((row) => dirOk(row.dir, q.dir) && String(row.service_type ?? "") === q.serviceType)
-  const seqMatched = matched.filter((row) => Number(row.seq) === q.seq)
-  return toHits((seqMatched.length ? seqMatched : matched).map((row) => ({
-    iso: row.eta,
-    remark: row.rmk_tc ?? "",
-  })))
+  return toHits(
+    matched.map((row) => ({
+      iso: row.eta,
+      remark: row.rmk_tc ?? "",
+    })),
+  )
 }
 
 async function ctb(q: EtaQuery) {
@@ -43,11 +45,12 @@ async function ctb(q: EtaQuery) {
   const data = await getJson<{ data?: KmbEta[] }>(url)
   const rows = data?.data ?? []
   const matched = rows.filter((row) => dirOk(row.dir, q.dir))
-  const seqMatched = matched.filter((row) => Number(row.seq) === q.seq)
-  return toHits((seqMatched.length ? seqMatched : matched).map((row) => ({
-    iso: row.eta,
-    remark: row.rmk_tc ?? "",
-  })))
+  return toHits(
+    matched.map((row) => ({
+      iso: row.eta,
+      remark: row.rmk_tc ?? "",
+    })),
+  )
 }
 
 async function nlb(q: EtaQuery) {
@@ -105,7 +108,7 @@ async function mtrBus(q: EtaQuery) {
     if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 7200) continue
     hits.push({ epoch: now + seconds * 1000, remark: keepRemark(bus.busRemark ?? text) })
   }
-  return hits.slice(0, 3)
+  return hits.slice(0, 5)
 }
 
 type KmbEta = {
@@ -136,7 +139,7 @@ function toHits(rows: { iso: string | null | undefined; remark: string }[]) {
     if (!row.iso) continue
     const epoch = Date.parse(row.iso)
     if (!Number.isFinite(epoch)) continue
-    if (epoch < now - 60_000) continue
+    if (epoch < now - 90_000) continue
     hits.push({ epoch, remark: keepRemark(row.remark) })
   }
   hits.sort((a, b) => a.epoch - b.epoch)
@@ -144,7 +147,7 @@ function toHits(rows: { iso: string | null | undefined; remark: string }[]) {
   for (const hit of hits) {
     if (unique.some((item) => Math.abs(item.epoch - hit.epoch) < 30_000)) continue
     unique.push(hit)
-    if (unique.length === 3) break
+    if (unique.length === 5) break
   }
   return unique
 }
