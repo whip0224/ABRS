@@ -18,6 +18,7 @@ import { loadEtas, lookupAddresses } from "@/lib/bus/api"
 import { ensureNetwork, updateNetwork } from "@/lib/bus/client-network"
 import { searchBuses, suggestStops } from "@/lib/bus/engine"
 import {
+  dedupeSuggestions,
   etaKey,
   formatEta,
   formatEtaClock,
@@ -89,7 +90,16 @@ export function TransitApp() {
       const res = await loadEtas({ data: { items: unique } })
       setEtas((prev) => {
         const next = { ...prev }
-        for (const row of res.items) next[row.key] = row.etas
+        const rows = Array.isArray(res?.items) ? res.items : []
+        for (const row of rows) {
+          if (row && typeof row.key === "string" && Array.isArray(row.etas)) {
+            next[row.key] = row.etas
+          }
+        }
+        for (const query of unique) {
+          const key = etaKey(query)
+          if (next[key] === "loading") next[key] = []
+        }
         return next
       })
     } catch {
@@ -171,7 +181,7 @@ export function TransitApp() {
             addresses = res.addresses
           }
           if (cancelled) return
-          setSuggestions([...places, ...addresses].slice(0, 8))
+          setSuggestions(dedupeSuggestions([...places, ...addresses]).slice(0, 8))
         } catch (err) {
           if (cancelled) return
           setSuggestions([])
@@ -904,8 +914,8 @@ function SuggestionList({
   return (
     <ul className="mt-2 max-h-60 overflow-auto rounded-xl border border-line bg-raised">
       {pending && items.length === 0 && <li className="px-3 py-3 text-sm text-muted">搜尋車站…</li>}
-      {items.map((item) => (
-        <li key={`${item.kind}-${item.id}-${item.label}`}>
+      {items.map((item, index) => (
+        <li key={`${item.kind}-${item.id}-${index}`}>
           <button
             type="button"
             className="flex min-h-11 w-full items-start gap-3 px-3 py-3 text-left"
@@ -1230,23 +1240,25 @@ function EtaLine({
   if (eta === "error") return <p className="mt-2 text-sm text-muted">到站時間暫時無法取得</p>
   if (!eta.length) return <p className="mt-2 text-sm text-muted">暫時沒有班次</p>
   const remark = eta.find((item) => item.remark)?.remark
-  const visible = showSchedule && !expanded ? eta.slice(0, 2) : eta.slice(0, 5)
-  const labels = ["本班", "下一班"]
+  const visible = showSchedule && !expanded ? eta.slice(0, 3) : eta.slice(0, 5)
+  const labels = ["本班", "下一班", "再下一班"]
   return (
     <div className="mt-2">
       <div className="space-y-1.5">
         {visible.map((item, index) => (
-          <div key={`${item.epoch}-${index}`} className="flex flex-wrap items-center gap-2">
-            {showSchedule && index < 2 ? (
-              <span className="w-10 shrink-0 text-xs text-muted">{labels[index] ?? ""}</span>
+          <div key={`${item.epoch ?? "pending"}-${index}`} className="flex flex-wrap items-center gap-2">
+            {showSchedule && index < 3 ? (
+              <span className="w-14 shrink-0 text-xs text-muted">{labels[index] ?? ""}</span>
             ) : null}
             <span className="rounded-full bg-bg px-3 py-1 text-sm font-medium text-primary">{formatEta(item.epoch, now)}</span>
-            {showSchedule ? <span className="text-xs text-muted">{formatEtaClock(item.epoch)}</span> : null}
+            {showSchedule && item.epoch !== null ? (
+              <span className="text-xs text-muted">{formatEtaClock(item.epoch)}</span>
+            ) : null}
             {item.remark ? <span className="text-xs text-muted">{item.remark}</span> : null}
           </div>
         ))}
       </div>
-      {showSchedule && eta.length > 2 ? (
+      {showSchedule && eta.length > 3 ? (
         <button
           type="button"
           className="mt-2 inline-flex h-9 items-center gap-1 text-xs text-primary"
@@ -1254,7 +1266,7 @@ function EtaLine({
           onClick={() => setExpanded((open) => !open)}
         >
           <ChevronDown className={expanded ? "size-3.5 rotate-180" : "size-3.5"} />
-          {expanded ? "收合其他班次" : `更多班次（${eta.length - 2}）`}
+          {expanded ? "收合其他班次" : `更多班次（${eta.length - 3}）`}
         </button>
       ) : null}
       {!showSchedule && remark ? <p className="mt-1 text-xs text-muted">{remark}</p> : null}
@@ -1282,7 +1294,8 @@ function earliestEtaEpoch(trip: TripResult, etas: Record<string, EtaHit[] | "loa
   if (!leg) return null
   const hit = etas[etaKey(leg.eta)]
   if (!hit || hit === "loading" || hit === "error" || !hit.length) return null
-  return hit[0].epoch
+  const live = hit.find((row) => row.epoch !== null)
+  return live?.epoch ?? null
 }
 
 function dedupeQueries(queries: EtaQuery[]) {

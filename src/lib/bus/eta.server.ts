@@ -2,6 +2,7 @@ import { etaKey, type EtaHit, type EtaQuery } from "./types"
 
 const UA = "Mozilla/5.0"
 const cache = new Map<string, { exp: number; etas: EtaHit[] }>()
+const routeStopCache = new Map<string, { exp: number; rows: { stop: string; seq: number }[] }>()
 
 export async function fetchEtas(items: EtaQuery[]) {
   const now = Date.now()
@@ -26,25 +27,99 @@ async function loadOne(q: EtaQuery): Promise<EtaHit[]> {
   return mtrBus(q)
 }
 
-async function kmb(q: EtaQuery) {
-  const url = `https://data.etabus.gov.hk/v1/transport/kmb/eta/${encodeURIComponent(q.stopId)}/${encodeURIComponent(q.route)}/${encodeURIComponent(q.serviceType)}`
+async function kmb(q: EtaQuery): Promise<EtaHit[]> {
+  const stopId = await resolveKmbStopId(q)
+  const url = `https://data.etabus.gov.hk/v1/transport/kmb/eta/${encodeURIComponent(stopId)}/${encodeURIComponent(q.route)}/${encodeURIComponent(q.serviceType)}`
   const data = await getJson<{ data?: KmbEta[] }>(url)
   const rows = data?.data ?? []
-  // Stop id is already in the URL — do not filter by seq; a wrong seq drops the imminent bus.
-  const matched = rows.filter((row) => dirOk(row.dir, q.dir) && String(row.service_type ?? "") === q.serviceType)
-  return toHits(
-    matched.map((row) => ({
-      iso: row.eta,
-      remark: row.rmk_tc ?? "",
-    })),
-  )
+  const matched = rows
+    .filter(
+      (row) =>
+        dirOk(row.dir, q.dir) &&
+        String(row.service_type ?? "") === q.serviceType &&
+        destOk(row.dest_tc, q.destHint),
+    )
+    .sort((a, b) => (a.eta_seq ?? 99) - (b.eta_seq ?? 99))
+  return kmbRowsToHits(matched)
+}
+
+async function resolveKmbStopId(q: EtaQuery): Promise<string> {
+  const stops = await kmbRouteStops(q.route, q.dir, q.serviceType)
+  if (!stops.length) return q.stopId
+  const exact = stops.find((row) => row.seq === q.seq)
+  if (exact) return exact.stop
+  const near = stops.find((row) => Math.abs(row.seq - q.seq) <= 1)
+  return near?.stop ?? q.stopId
+}
+
+async function kmbRouteStops(route: string, dir: string, serviceType: string) {
+  const bound = dir.toUpperCase() === "I" ? "inbound" : "outbound"
+  const key = `${route}|${bound}|${serviceType}`
+  const cached = routeStopCache.get(key)
+  if (cached && cached.exp > Date.now()) return cached.rows
+  const url = `https://data.etabus.gov.hk/v1/transport/kmb/route-stop/${encodeURIComponent(route)}/${bound}/${encodeURIComponent(serviceType)}`
+  const data = await getJson<{ data?: { stop?: string; seq?: string }[] }>(url)
+  const rows = (data?.data ?? [])
+    .map((row) => ({ stop: row.stop ?? "", seq: Number(row.seq) }))
+    .filter((row) => row.stop && Number.isFinite(row.seq))
+  routeStopCache.set(key, { exp: Date.now() + 3_600_000, rows })
+  return rows
+}
+
+function destOk(destTc: string | undefined, hint: string | null) {
+  if (!hint || !destTc) return true
+  const normalize = (value: string) =>
+    value
+      .replace(/[（）()]/g, "")
+      .replace(/\s+/g, "")
+      .toLowerCase()
+  const a = normalize(hint)
+  const b = normalize(destTc)
+  if (a.includes(b) || b.includes(a)) return true
+  const aCore = a.replace(/中環|港澳|碼頭|順利/g, (m) => m).slice(0, 6)
+  return b.includes(aCore) || a.includes(b.slice(0, 6))
+}
+
+function kmbRowsToHits(rows: KmbEta[]): EtaHit[] {
+  const now = Date.now()
+  const hits: EtaHit[] = []
+  for (const row of rows) {
+    const operator = operatorRemark(row.co)
+    const baseRemark = keepRemark(row.rmk_tc ?? "")
+    const remark = [baseRemark, operator].filter(Boolean).join(" · ")
+
+    if (!row.eta) {
+      hits.push({ epoch: null, remark: remark || "暫無實時" })
+      continue
+    }
+    const epoch = Date.parse(row.eta)
+    if (!Number.isFinite(epoch)) continue
+    if (epoch < now - 90_000) continue
+    hits.push({ epoch, remark })
+  }
+  hits.sort((a, b) => {
+    if (a.epoch === null && b.epoch === null) return 0
+    if (a.epoch === null) return 1
+    if (b.epoch === null) return -1
+    return a.epoch - b.epoch
+  })
+  return hits.slice(0, 5)
+}
+
+function operatorRemark(co: string | undefined) {
+  const tag = co?.trim().toUpperCase()
+  if (tag === "CTB") return "城巴派車"
+  if (tag === "KMB") return ""
+  return co?.trim() ? co.trim() : ""
 }
 
 async function ctb(q: EtaQuery) {
   const url = `https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/${encodeURIComponent(q.stopId)}/${encodeURIComponent(q.route)}`
   const data = await getJson<{ data?: KmbEta[] }>(url)
   const rows = data?.data ?? []
-  const matched = rows.filter((row) => dirOk(row.dir, q.dir))
+  const matched = rows
+    .filter((row) => dirOk(row.dir, q.dir) && destOk(row.dest_tc, q.destHint))
+    .sort((a, b) => (a.eta_seq ?? 99) - (b.eta_seq ?? 99))
   return toHits(
     matched.map((row) => ({
       iso: row.eta,
@@ -112,10 +187,13 @@ async function mtrBus(q: EtaQuery) {
 }
 
 type KmbEta = {
+  co?: string
   eta?: string | null
+  eta_seq?: number
   dir?: string
   seq?: number
   service_type?: number | string
+  dest_tc?: string
   rmk_tc?: string
 }
 
@@ -142,10 +220,12 @@ function toHits(rows: { iso: string | null | undefined; remark: string }[]) {
     if (epoch < now - 90_000) continue
     hits.push({ epoch, remark: keepRemark(row.remark) })
   }
-  hits.sort((a, b) => a.epoch - b.epoch)
+  hits.sort((a, b) => (a.epoch ?? 0) - (b.epoch ?? 0))
   const unique: EtaHit[] = []
   for (const hit of hits) {
-    if (unique.some((item) => Math.abs(item.epoch - hit.epoch) < 30_000)) continue
+    if (hit.epoch !== null && unique.some((item) => item.epoch !== null && Math.abs(item.epoch - hit.epoch!) < 30_000)) {
+      continue
+    }
     unique.push(hit)
     if (unique.length === 5) break
   }
@@ -155,7 +235,7 @@ function toHits(rows: { iso: string | null | undefined; remark: string }[]) {
 function keepRemark(value: string) {
   const text = value.trim()
   if (!text) return ""
-  if (text.includes("原定") || text.includes("未開出") || text === "Scheduled") return ""
+  if (text === "Scheduled") return "原定班次"
   return text.slice(0, 24)
 }
 

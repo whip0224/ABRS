@@ -55,7 +55,7 @@ function parseAls(xml: string, query: string): Suggestion[] {
     ranked.push({
       rank: bigramHits(compact, label) * 100 + (blob.includes(compact) ? 80 : 0) + score,
       item: {
-        id: `addr-${lat.toFixed(5)}-${lng.toFixed(5)}`,
+        id: `addr-${lat.toFixed(5)}-${lng.toFixed(5)}-${label}`,
         label,
         detail: detail ? `${detail} · 地址` : "地址",
         lat,
@@ -65,7 +65,15 @@ function parseAls(xml: string, query: string): Suggestion[] {
     })
   }
   ranked.sort((a, b) => b.rank - a.rank)
-  return ranked.map((row) => row.item)
+  const out: Suggestion[] = []
+  const seen = new Set<string>()
+  for (const row of ranked) {
+    const sig = `${row.item.label}|${row.item.lat.toFixed(5)}|${row.item.lng.toFixed(5)}`
+    if (seen.has(sig)) continue
+    seen.add(sig)
+    out.push(row.item)
+  }
+  return out
 }
 
 const FACILITY = [

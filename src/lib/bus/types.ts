@@ -13,6 +13,19 @@ export type Suggestion = {
   kind: "stop" | "address"
 }
 
+/** Drop duplicate ALS / merged autocomplete rows (same coords + label). */
+export function dedupeSuggestions(items: Suggestion[]) {
+  const seen = new Set<string>()
+  const out: Suggestion[] = []
+  for (const item of items) {
+    const sig = `${item.kind}|${item.id}|${item.label}|${item.lat.toFixed(5)}|${item.lng.toFixed(5)}`
+    if (seen.has(sig)) continue
+    seen.add(sig)
+    out.push(item)
+  }
+  return out
+}
+
 export type EtaCo = "kmb" | "ctb" | "nlb" | "gmb" | "mtrbus"
 
 export type EtaQuery = {
@@ -22,12 +35,15 @@ export type EtaQuery = {
   serviceType: string
   dir: string
   seq: number
+  /** Route destination (tc) — filters KMB rows by `dest_tc` like the official app direction */
+  destHint: string | null
   nlbId: string | null
   gtfsId: string | null
 }
 
 export type EtaHit = {
-  epoch: number
+  /** null when the open-data row exists but `eta` is not published yet for this stop */
+  epoch: number | null
   remark: string
 }
 
@@ -92,7 +108,7 @@ export function companyLabel(companies: string[], routeNo: string) {
 }
 
 export function etaKey(q: EtaQuery) {
-  return [q.co, q.stopId, q.route, q.serviceType, q.dir, q.seq, q.nlbId ?? "", q.gtfsId ?? ""].join("|")
+  return [q.co, q.stopId, q.route, q.serviceType, q.dir, q.seq, q.destHint ?? "", q.nlbId ?? "", q.gtfsId ?? ""].join("|")
 }
 
 export function formatWalk(meters: number) {
@@ -101,14 +117,16 @@ export function formatWalk(meters: number) {
   return `步行 ${rounded} 米`
 }
 
-export function formatEta(epoch: number, now = Date.now()) {
+export function formatEta(epoch: number | null, now = Date.now()) {
+  if (epoch === null) return "暫無實時"
   const diffMs = epoch - now
   if (diffMs <= 60_000) return "即將到站"
   const minutes = Math.max(1, Math.floor(diffMs / 60_000))
   return `${minutes} 分鐘`
 }
 
-export function formatEtaClock(epoch: number) {
+export function formatEtaClock(epoch: number | null) {
+  if (epoch === null) return "—"
   const date = new Date(epoch)
   const hours = date.getHours()
   const minutes = date.getMinutes().toString().padStart(2, "0")

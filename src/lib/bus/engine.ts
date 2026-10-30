@@ -449,6 +449,7 @@ function makeLeg(
       serviceType: route.serviceType,
       dir: route.dir,
       seq: route.stopSeqs?.[boardPos] ?? boardPos + 1,
+      destHint: route.dest,
       nlbId: route.nlbId,
       gtfsId: route.gtfsId,
     },

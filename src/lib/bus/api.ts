@@ -119,6 +119,7 @@ function parseEta(value: unknown): EtaQuery {
     serviceType: raw.serviceType.slice(0, 8),
     dir: raw.dir.slice(0, 4),
     seq: raw.seq,
+    destHint: typeof raw.destHint === "string" ? raw.destHint.trim().slice(0, 40) : null,
     nlbId: typeof raw.nlbId === "string" ? raw.nlbId.slice(0, 12) : null,
     gtfsId: typeof raw.gtfsId === "string" ? raw.gtfsId.slice(0, 16) : null,
   }
